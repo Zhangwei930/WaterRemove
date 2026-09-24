@@ -8,6 +8,11 @@
 //! ## バージョン比較
 //! - mIV のリリースタグは `v0.8.1` 形式 (先頭 `v` + semver)。`semver::Version::parse`
 //!   は `v` を受け付けないので strip してから比較する。
+//! - 简体中文版 (Zhangwei930/WaterRemove) は本体バージョンを変えずに配布するため、
+//!   タグを `v<本体バージョン>-zh.<DISTRIBUTION_REVISION>` とし、実行中の版も
+//!   同じ形に直してから比較する。本体バージョン (`CARGO_PKG_VERSION`) 自体に
+//!   pre-release を付けないのは、設定 DB の「新しい版で保存された」判定や編集用追加
+//!   パックの最低版判定が、上游 4.0.0 より古い版として扱ってしまうため。
 //! - リリース名 (`name`) は人間向けで信頼しない。判定は `tag_name` のみで行う。
 //!
 //! ## レート制限
@@ -27,8 +32,25 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 const RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/MikageSawatari/mimageviewer/releases/latest";
-const RELEASES_PAGE_URL: &str = "https://github.com/MikageSawatari/mimageviewer/releases/latest";
+    "https://api.github.com/repos/Zhangwei930/WaterRemove/releases/latest";
+const RELEASES_PAGE_URL: &str = "https://github.com/Zhangwei930/WaterRemove/releases/latest";
+
+/// 简体中文版の配布リビジョン。同じ本体バージョンで中文版を出し直すたびに 1 上げ、
+/// 本体バージョンが上がったら 1 に戻す。リリースタグは
+/// `v<本体バージョン>-zh.<DISTRIBUTION_REVISION>` (release workflow が一致を検査する)。
+pub const DISTRIBUTION_REVISION: u64 = 1;
+
+/// 実行中の本体バージョンを、リリースタグと比較できる配布バージョンへ直す。
+/// 既に pre-release が付いている場合はそのまま使う。
+fn distribution_version(current_version: &str) -> Result<semver::Version, String> {
+    let mut version = semver::Version::parse(current_version)
+        .map_err(|e| format!("current version parse: {e}"))?;
+    if version.pre.is_empty() {
+        version.pre = semver::Prerelease::new(&format!("zh.{DISTRIBUTION_REVISION}"))
+            .map_err(|e| format!("distribution revision: {e}"))?;
+    }
+    Ok(version)
+}
 
 /// 更新チェック結果。
 #[derive(Clone, Debug)]
@@ -68,8 +90,7 @@ pub fn spawn_check(
 }
 
 fn perform_check(current_version: &str) -> Result<UpdateInfo, String> {
-    let current = semver::Version::parse(current_version)
-        .map_err(|e| format!("current version parse: {e}"))?;
+    let current = distribution_version(current_version)?;
     let user_agent = format!("mImageViewer/{current_version}");
     let resp = ureq::get(RELEASES_LATEST_URL)
         .set("User-Agent", &user_agent)
@@ -142,6 +163,20 @@ pub fn releases_page_url() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distribution_version_orders_chinese_releases() {
+        let current = distribution_version("4.0.0").unwrap();
+        assert_eq!(
+            current.to_string(),
+            format!("4.0.0-zh.{DISTRIBUTION_REVISION}")
+        );
+        let parse = |tag: &str| semver::Version::parse(tag).unwrap();
+        assert!(parse("4.0.0-zh.2") > parse("4.0.0-zh.1"));
+        assert!(parse("4.0.0-zh.10") > parse("4.0.0-zh.2"));
+        assert!(parse("4.0.1-zh.1") > parse("4.0.0-zh.9"));
+        assert!(parse("4.0.0-zh.1") < parse("4.0.0"));
+    }
     use serde_json::json;
 
     #[test]

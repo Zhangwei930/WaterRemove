@@ -1,0 +1,199 @@
+name: Release (简体中文版 portable)
+
+# 简体中文版のポータブル版を GitHub Actions の Windows ランナーでビルドし、
+# このリポジトリの Releases に公開する。
+#
+# 使い方: `v<本体バージョン>-zh.<DISTRIBUTION_REVISION>` 形式のタグを push する
+# (例: v4.0.0-zh.1)。既存タグを作り直す場合は Actions 画面から workflow_dispatch で
+# タグ名を指定して再実行する。
+#
+# ビルド方針:
+# - Rust のコード (core / remote) はこのリポジトリのソースからビルドする。
+# - AI モデル・PDFium・ONNX Runtime・Susie 32bit ワーカー・FFmpeg DLL・VC ランタイムは
+#   上流 (MikageSawatari/mimageviewer) の同じ本体バージョンのポータブル版 zip に
+#   同梱されている実物をそのまま使う。モデルは APPDATA からのコピー以外に取得経路が
+#   無く、上流の配布物と同一のものを使うのが最も確実なため。
+# - FFmpeg の import library / ヘッダは BtbN の n7.1 系 LGPL shared build から取る
+#   (上流 v4.0.0 の n7.1.5-16 は BtbN から消えているため、残っている最新の n7.1 を使う。
+#   DLL 名・ABI は 7.1 系で共通)。同梱する DLL は上流と同一なので、アプリ内の
+#   FFmpeg ビルド識別子 (vendor/ffmpeg/VERSION) も上流 DLL の値に合わせる。
+# - コード署名は行わない (上流の証明書は使えない)。
+
+on:
+  push:
+    tags: ['v*-zh.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v4.0.0-zh.1). The tag must already exist.'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-zh-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: MikageSawatari/mimageviewer
+  # 上流ポータブル版から実行時ファイルを取る本体バージョン。Cargo.toml と一致させる。
+  UPSTREAM_TAG: v4.0.0
+  # 上流ポータブル版に同梱されている FFmpeg DLL のビルド識別子 (DLL の ProductVersion)。
+  UPSTREAM_FFMPEG_BUILD_ID: n7.1.5-16-g9a4bb2c579
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build portable zip (windows)
+    runs-on: windows-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          $tag = '${{ github.event.inputs.tag }}'
+          if (-not $tag) { $tag = '${{ github.ref_name }}' }
+          "name=$tag" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          lfs: false
+
+      - name: Check tag matches Cargo.toml and DISTRIBUTION_REVISION
+        run: |
+          $tag = '${{ steps.tag.outputs.name }}'
+          $cargo = Get-Content Cargo.toml -Raw
+          if ($cargo -notmatch '(?m)^version = "([^"]+)"') { throw 'version not found in Cargo.toml' }
+          $version = $Matches[1]
+          $update = Get-Content src/update_check.rs -Raw
+          if ($update -notmatch 'DISTRIBUTION_REVISION: u64 = (\d+)') { throw 'DISTRIBUTION_REVISION not found' }
+          $revision = $Matches[1]
+          $expected = "v$version-zh.$revision"
+          if ($tag -ne $expected) {
+            throw "Tag $tag does not match the source ($expected). Update Cargo.toml / DISTRIBUTION_REVISION or the tag."
+          }
+          if ("v$version" -ne $env:UPSTREAM_TAG) {
+            throw "Cargo.toml version v$version differs from UPSTREAM_TAG $env:UPSTREAM_TAG. Update UPSTREAM_TAG / UPSTREAM_FFMPEG_BUILD_ID in this workflow."
+          }
+          Write-Host "Building $tag (upstream runtime files: $env:UPSTREAM_TAG)"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NASM (libjpeg-turbo)
+        uses: ilammy/setup-nasm@v1
+
+      - name: Locate libclang (bindgen for FFmpeg)
+        run: |
+          $candidates = @(
+            'C:\Program Files\LLVM\bin',
+            (Get-Command clang -ErrorAction SilentlyContinue | ForEach-Object { Split-Path $_.Source })
+          ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'libclang.dll')) }
+          if (-not $candidates) { throw 'libclang.dll not found' }
+          $dir = @($candidates)[0]
+          Write-Host "LIBCLANG_PATH=$dir"
+          "LIBCLANG_PATH=$dir" >> $env:GITHUB_ENV
+
+      - name: Download upstream portable package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force upstream | Out-Null
+          gh release download $env:UPSTREAM_TAG -R $env:UPSTREAM_REPO -p 'mImageViewer_portable_*.zip' -D upstream
+          $zip = Get-ChildItem upstream -Filter 'mImageViewer_portable_*.zip' | Select-Object -First 1
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath upstream\pkg -Force
+          Get-ChildItem -Recurse upstream\pkg | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Populate vendor/ from upstream runtime files
+        run: |
+          $pkg = 'upstream\pkg'
+          New-Item -ItemType Directory -Force vendor\pdfium\bin, vendor\ort, vendor\susie-worker, vendor\models, vendor\ffmpeg\bin | Out-Null
+          Copy-Item "$pkg\pdfium.dll" vendor\pdfium\bin\
+          Copy-Item "$pkg\onnxruntime.dll", "$pkg\onnxruntime_providers_shared.dll" vendor\ort\
+          Copy-Item "$pkg\mimageviewer-susie32.exe" vendor\susie-worker\
+          Copy-Item "$pkg\models\*.onnx" vendor\models\
+          Get-ChildItem vendor -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Fetch FFmpeg n7.1 headers and import libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 残っている autobuild の中から最新の n7.1 LGPL shared build を探す。
+          $releases = gh api 'repos/BtbN/FFmpeg-Builds/releases?per_page=100' | ConvertFrom-Json
+          $asset = $null
+          foreach ($release in $releases) {
+            $asset = $release.assets | Where-Object { $_.name -like 'ffmpeg-n7.1*-win64-lgpl-shared-7.1.zip' } | Select-Object -First 1
+            if ($asset) { break }
+          }
+          if (-not $asset) { throw 'No n7.1 LGPL shared build found in BtbN/FFmpeg-Builds releases' }
+          Write-Host "Using $($asset.name) for headers / import libraries"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+          $root = Get-ChildItem ffmpeg-extract -Directory | Select-Object -First 1
+          Copy-Item "$($root.FullName)\include" vendor\ffmpeg\ -Recurse -Force
+          Copy-Item "$($root.FullName)\lib" vendor\ffmpeg\ -Recurse -Force
+          if (Test-Path "$($root.FullName)\LICENSE.txt") { Copy-Item "$($root.FullName)\LICENSE.txt" vendor\ffmpeg\ }
+          # 同梱する DLL は上流ポータブル版と同一のものにする。
+          Copy-Item upstream\pkg\av*.dll, upstream\pkg\sw*.dll vendor\ffmpeg\bin\ -Force
+          # アプリの「ソフトウェア情報」に出る FFmpeg ビルド識別子を同梱 DLL に合わせる。
+          "ffmpeg-$env:UPSTREAM_FFMPEG_BUILD_ID-win64-lgpl-shared-7.1.zip" | Set-Content -NoNewline -Encoding ascii vendor\ffmpeg\VERSION
+          Get-ChildItem vendor\ffmpeg\bin, vendor\ffmpeg\lib | Select-Object Name, Length | Format-Table -AutoSize
+
+      - name: Fetch Twemoji (stamp assets)
+        shell: bash
+        run: bash scripts/setup-twemoji.sh
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-zh-portable
+          workspaces: '. -> target-portable'
+
+      - name: Build core (portable)
+        run: cargo build --release --locked --bin mimageviewer-core --features portable --target-dir target-portable
+
+      - name: Build remote service
+        run: cargo build --release --locked -p mimageviewer-remote --bin mimageviewer-remote --features embedded-web-assets --target-dir target-portable
+
+      - name: Test i18n / settings / update check
+        run: |
+          cargo test --release --locked --lib --features portable --target-dir target-portable -- i18n:: update_check:: ui_language
+
+      - name: Assemble portable zip
+        id: package
+        run: |
+          $tag = '${{ steps.tag.outputs.name }}'
+          $name = "mImageViewer_zh-CN_portable_$tag"
+          $out = "dist\$name"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item upstream\pkg $out -Recurse
+          Copy-Item target-portable\release\mimageviewer-core.exe "$out\mimageviewer.exe" -Force
+          Copy-Item target-portable\release\mimageviewer-remote.exe "$out\mimageviewer-remote.exe" -Force
+          Copy-Item LICENSE "$out\LICENSE-mimageviewer.txt" -Force
+          Copy-Item .github\release-zh\readme_zh.txt "$out\readme_zh.txt" -Force
+          # zip の中身を一覧で残しておく (添付ファイルの取り違え確認用)。
+          Get-ChildItem -Recurse $out -File | ForEach-Object {
+            '{0,12}  {1}  {2}' -f $_.Length, (Get-FileHash $_.FullName -Algorithm SHA256).Hash, $_.FullName.Substring((Resolve-Path $out).Path.Length + 1)
+          }
+          Compress-Archive -Path "$out\*" -DestinationPath "dist\$name.zip" -CompressionLevel Optimal
+          (Get-FileHash "dist\$name.zip" -Algorithm SHA256).Hash + "  $name.zip" | Set-Content -Encoding ascii "dist\$name.zip.sha256"
+          "zip=dist\$name.zip" >> $env:GITHUB_OUTPUT
+          "sha=dist\$name.zip.sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.tag.outputs.name }}'
+          $notes = (Get-Content .github\release-zh\notes.md -Raw).Replace('{TAG}', $tag).Replace('{UPSTREAM_TAG}', $env:UPSTREAM_TAG)
+          $notes | Set-Content -Encoding utf8 release-notes.md
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag '${{ steps.package.outputs.zip }}' '${{ steps.package.outputs.sha }}' --clobber
+            gh release edit $tag --notes-file release-notes.md
+          } else {
+            gh release create $tag '${{ steps.package.outputs.zip }}' '${{ steps.package.outputs.sha }}' --title "mImageViewer 简体中文版 $tag" --notes-file release-notes.md
+          }
