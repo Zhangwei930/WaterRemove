@@ -1,14 +1,18 @@
-name: Release (简体中文版 portable)
+name: Release (简体中文版)
 
-# 简体中文版のポータブル版を GitHub Actions の Windows ランナーでビルドし、
-# このリポジトリの Releases に公開する。
+# 简体中文版を GitHub Actions の Windows ランナーでビルドし、このリポジトリの
+# Releases に公開する。成果物は 2 種類:
+#   - mImageViewer_zh-CN_portable_<tag>.zip  ポータブル版 (loose DLL / モデル同梱)
+#   - mImageViewer_zh-CN_<tag>.exe           単体 exe 版 (launcher に全部埋め込み)
+# インストーラ (setup.exe) は作らない。
 #
 # 使い方: `v<本体バージョン>-zh.<DISTRIBUTION_REVISION>` 形式のタグを push する
-# (例: v4.0.0-zh.1)。既存タグを作り直す場合は Actions 画面から workflow_dispatch で
-# タグ名を指定して再実行する。
+# (例: v4.0.0-zh.1)。既存タグで作り直す場合は Actions 画面から workflow_dispatch で
+# タグ名を指定して再実行する (既存 Release の添付は上書きされる)。
 #
 # ビルド方針:
-# - Rust のコード (core / remote) はこのリポジトリのソースからビルドする。
+# - Rust のコード (core / remote / launcher) と VST3 host bridge (C++) はこの
+#   リポジトリのソースからビルドする。
 # - AI モデル・PDFium・ONNX Runtime・Susie 32bit ワーカー・FFmpeg DLL・VC ランタイムは
 #   上流 (MikageSawatari/mimageviewer) の同じ本体バージョンのポータブル版 zip に
 #   同梱されている実物をそのまま使う。モデルは APPDATA からのコピー以外に取得経路が
@@ -17,6 +21,7 @@ name: Release (简体中文版 portable)
 #   (上流 v4.0.0 の n7.1.5-16 は BtbN から消えているため、残っている最新の n7.1 を使う。
 #   DLL 名・ABI は 7.1 系で共通)。同梱する DLL は上流と同一なので、アプリ内の
 #   FFmpeg ビルド識別子 (vendor/ffmpeg/VERSION) も上流 DLL の値に合わせる。
+#   準備手順は .github/actions/prepare-build にまとめてある。
 # - コード署名は行わない (上流の証明書は使えない)。
 
 on:
@@ -41,32 +46,22 @@ env:
   UPSTREAM_TAG: v4.0.0
   # 上流ポータブル版に同梱されている FFmpeg DLL のビルド識別子 (DLL の ProductVersion)。
   UPSTREAM_FFMPEG_BUILD_ID: n7.1.5-16-g9a4bb2c579
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build portable zip (windows)
-    runs-on: windows-latest
-    timeout-minutes: 330
-    defaults:
-      run:
-        shell: pwsh
+  check:
+    name: Check tag
+    runs-on: ubuntu-latest
     steps:
-      - name: Resolve tag
-        id: tag
-        run: |
-          $tag = '${{ github.event.inputs.tag }}'
-          if (-not $tag) { $tag = '${{ github.ref_name }}' }
-          "name=$tag" >> $env:GITHUB_OUTPUT
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.tag.outputs.name }}
+          ref: ${{ env.RELEASE_TAG }}
           lfs: false
-
       - name: Check tag matches Cargo.toml and DISTRIBUTION_REVISION
+        shell: pwsh
         run: |
-          $tag = '${{ steps.tag.outputs.name }}'
+          $tag = $env:RELEASE_TAG
           $cargo = Get-Content Cargo.toml -Raw
           if ($cargo -notmatch '(?m)^version = "([^"]+)"') { throw 'version not found in Cargo.toml' }
           $version = $Matches[1]
@@ -82,70 +77,26 @@ jobs:
           }
           Write-Host "Building $tag (upstream runtime files: $env:UPSTREAM_TAG)"
 
-      - uses: dtolnay/rust-toolchain@stable
+  portable:
+    name: Portable zip (windows)
+    needs: check
+    runs-on: windows-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          lfs: false
 
-      - name: Install NASM (libjpeg-turbo)
-        uses: ilammy/setup-nasm@v1
-
-      - name: Locate libclang (bindgen for FFmpeg)
-        run: |
-          $candidates = @(
-            'C:\Program Files\LLVM\bin',
-            (Get-Command clang -ErrorAction SilentlyContinue | ForEach-Object { Split-Path $_.Source })
-          ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'libclang.dll')) }
-          if (-not $candidates) { throw 'libclang.dll not found' }
-          $dir = @($candidates)[0]
-          Write-Host "LIBCLANG_PATH=$dir"
-          "LIBCLANG_PATH=$dir" >> $env:GITHUB_ENV
-
-      - name: Download upstream portable package
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          New-Item -ItemType Directory -Force upstream | Out-Null
-          gh release download $env:UPSTREAM_TAG -R $env:UPSTREAM_REPO -p 'mImageViewer_portable_*.zip' -D upstream
-          $zip = Get-ChildItem upstream -Filter 'mImageViewer_portable_*.zip' | Select-Object -First 1
-          Expand-Archive -LiteralPath $zip.FullName -DestinationPath upstream\pkg -Force
-          Get-ChildItem -Recurse upstream\pkg | Select-Object FullName, Length | Format-Table -AutoSize
-
-      - name: Populate vendor/ from upstream runtime files
-        run: |
-          $pkg = 'upstream\pkg'
-          New-Item -ItemType Directory -Force vendor\pdfium\bin, vendor\ort, vendor\susie-worker, vendor\models, vendor\ffmpeg\bin | Out-Null
-          Copy-Item "$pkg\pdfium.dll" vendor\pdfium\bin\
-          Copy-Item "$pkg\onnxruntime.dll", "$pkg\onnxruntime_providers_shared.dll" vendor\ort\
-          Copy-Item "$pkg\mimageviewer-susie32.exe" vendor\susie-worker\
-          Copy-Item "$pkg\models\*.onnx" vendor\models\
-          Get-ChildItem vendor -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
-
-      - name: Fetch FFmpeg n7.1 headers and import libraries
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # 残っている autobuild の中から最新の n7.1 LGPL shared build を探す。
-          $releases = gh api 'repos/BtbN/FFmpeg-Builds/releases?per_page=100' | ConvertFrom-Json
-          $asset = $null
-          foreach ($release in $releases) {
-            $asset = $release.assets | Where-Object { $_.name -like 'ffmpeg-n7.1*-win64-lgpl-shared-7.1.zip' } | Select-Object -First 1
-            if ($asset) { break }
-          }
-          if (-not $asset) { throw 'No n7.1 LGPL shared build found in BtbN/FFmpeg-Builds releases' }
-          Write-Host "Using $($asset.name) for headers / import libraries"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract -Force
-          $root = Get-ChildItem ffmpeg-extract -Directory | Select-Object -First 1
-          Copy-Item "$($root.FullName)\include" vendor\ffmpeg\ -Recurse -Force
-          Copy-Item "$($root.FullName)\lib" vendor\ffmpeg\ -Recurse -Force
-          if (Test-Path "$($root.FullName)\LICENSE.txt") { Copy-Item "$($root.FullName)\LICENSE.txt" vendor\ffmpeg\ }
-          # 同梱する DLL は上流ポータブル版と同一のものにする。
-          Copy-Item upstream\pkg\av*.dll, upstream\pkg\sw*.dll vendor\ffmpeg\bin\ -Force
-          # アプリの「ソフトウェア情報」に出る FFmpeg ビルド識別子を同梱 DLL に合わせる。
-          "ffmpeg-$env:UPSTREAM_FFMPEG_BUILD_ID-win64-lgpl-shared-7.1.zip" | Set-Content -NoNewline -Encoding ascii vendor\ffmpeg\VERSION
-          Get-ChildItem vendor\ffmpeg\bin, vendor\ffmpeg\lib | Select-Object Name, Length | Format-Table -AutoSize
-
-      - name: Fetch Twemoji (stamp assets)
-        shell: bash
-        run: bash scripts/setup-twemoji.sh
+      - uses: ./.github/actions/prepare-build
+        with:
+          upstream-repo: ${{ env.UPSTREAM_REPO }}
+          upstream-tag: ${{ env.UPSTREAM_TAG }}
+          upstream-ffmpeg-build-id: ${{ env.UPSTREAM_FFMPEG_BUILD_ID }}
+          github-token: ${{ github.token }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -163,10 +114,8 @@ jobs:
           cargo test --release --locked --lib --features portable --target-dir target-portable -- i18n:: update_check:: ui_language
 
       - name: Assemble portable zip
-        id: package
         run: |
-          $tag = '${{ steps.tag.outputs.name }}'
-          $name = "mImageViewer_zh-CN_portable_$tag"
+          $name = "mImageViewer_zh-CN_portable_$env:RELEASE_TAG"
           $out = "dist\$name"
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item upstream\pkg $out -Recurse
@@ -180,20 +129,109 @@ jobs:
           }
           Compress-Archive -Path "$out\*" -DestinationPath "dist\$name.zip" -CompressionLevel Optimal
           (Get-FileHash "dist\$name.zip" -Algorithm SHA256).Hash + "  $name.zip" | Set-Content -Encoding ascii "dist\$name.zip.sha256"
-          "zip=dist\$name.zip" >> $env:GITHUB_OUTPUT
-          "sha=dist\$name.zip.sha256" >> $env:GITHUB_OUTPUT
+          Remove-Item -Recurse -Force $out
 
-      - name: Publish GitHub Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  exe:
+    name: Single exe (windows)
+    needs: check
+    runs-on: windows-latest
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          lfs: false
+
+      - uses: ./.github/actions/prepare-build
+        with:
+          upstream-repo: ${{ env.UPSTREAM_REPO }}
+          upstream-tag: ${{ env.UPSTREAM_TAG }}
+          upstream-ffmpeg-build-id: ${{ env.UPSTREAM_FFMPEG_BUILD_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Fetch VST3 SDK (MIT)
+        run: |
+          git clone --recursive --depth 1 --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git vendor/vst3sdk
+          if ($LASTEXITCODE -ne 0) { throw "VST3 SDK clone failed ($LASTEXITCODE)" }
+          if (-not (Select-String -Path vendor/vst3sdk/LICENSE.txt -Pattern 'MIT License' -Quiet)) { throw 'VST3 SDK is not MIT licensed' }
+          git -C vendor/vst3sdk log -1 --format='VST3 SDK %H %cd'
+
+      - name: Build VST3 host bridge (C++)
+        run: |
+          # 既定の Visual Studio generator を使う (出力先は CMakeLists.txt が vendor/vst3-host に固定)。
+          cmake -S crates/vst3-host -B crates/vst3-host/build -A x64
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed ($LASTEXITCODE)" }
+          cmake --build crates/vst3-host/build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed ($LASTEXITCODE)" }
+          if (-not (Test-Path vendor/vst3-host/mimageviewer-vst3-host.exe)) { throw 'mimageviewer-vst3-host.exe was not produced' }
+          Get-Item vendor/vst3-host/mimageviewer-vst3-host.exe | Select-Object FullName, Length
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-zh-exe
+
+      - name: Build core (embedded assets)
+        run: cargo build --release --locked --bin mimageviewer-core
+
+      - name: Build remote service
+        run: cargo build --release --locked -p mimageviewer-remote --bin mimageviewer-remote --features embedded-web-assets
+
+      - name: Build launcher (single exe)
+        run: cargo build --release --locked -p mimageviewer-launcher --bin mimageviewer
+
+      - name: Collect exe
+        run: |
+          $name = "mImageViewer_zh-CN_$env:RELEASE_TAG.exe"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\mimageviewer.exe "dist\$name"
+          (Get-FileHash "dist\$name" -Algorithm SHA256).Hash + "  $name" | Set-Content -Encoding ascii "dist\$name.sha256"
+          Get-ChildItem dist | Select-Object Name, Length | Format-Table -AutoSize
+          # launcher は GUI サブシステムなので、終了を待って exit code を確かめる。
+          $proc = Start-Process -FilePath "dist\$name" -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -ne 0) { throw "exe --version failed ($($proc.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [portable, exe]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          lfs: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = '${{ steps.tag.outputs.name }}'
-          $notes = (Get-Content .github\release-zh\notes.md -Raw).Replace('{TAG}', $tag).Replace('{UPSTREAM_TAG}', $env:UPSTREAM_TAG)
-          $notes | Set-Content -Encoding utf8 release-notes.md
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag '${{ steps.package.outputs.zip }}' '${{ steps.package.outputs.sha }}' --clobber
-            gh release edit $tag --notes-file release-notes.md
-          } else {
-            gh release create $tag '${{ steps.package.outputs.zip }}' '${{ steps.package.outputs.sha }}' --title "mImageViewer 简体中文版 $tag" --notes-file release-notes.md
-          }
+          set -euo pipefail
+          ls -la dist
+          sed -e "s/{TAG}/${RELEASE_TAG}/g" -e "s/{UPSTREAM_TAG}/${UPSTREAM_TAG}/g" .github/release-zh/notes.md > release-notes.md
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" dist/* --title "mImageViewer 简体中文版 $RELEASE_TAG" --notes-file release-notes.md
+          fi

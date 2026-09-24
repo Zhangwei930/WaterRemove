@@ -18,6 +18,9 @@ use sha2::{Digest, Sha256};
 mod build_const_parser;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// 展開先 `%APPDATA%/mimageviewer/runtime/<RUNTIME_DIR_NAME>`。简体中文版は本体バージョンが
+/// 上流と同じなので、同じ版の上流 launcher と展開物を上書きし合わないよう別名にする。
+const RUNTIME_DIR_NAME: &str = concat!(env!("CARGO_PKG_VERSION"), "-zh");
 
 static CORE_EXE: &[u8] = include_bytes!(env!("MIMV_CORE_EXE"));
 static REMOTE_EXE: &[u8] = include_bytes!(env!("MIMV_REMOTE_EXE"));
@@ -234,7 +237,7 @@ fn appdata_runtime_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(appdata)
         .join("mimageviewer")
         .join("runtime")
-        .join(VERSION))
+        .join(RUNTIME_DIR_NAME))
 }
 
 fn is_vcrt_asset(name: &str) -> bool {

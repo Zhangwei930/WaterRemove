@@ -1,0 +1,91 @@
+name: Prepare Windows build
+description: >
+  Rust / NASM / libclang を用意し、上流ポータブル版の実行時ファイルと FFmpeg の
+  ヘッダ・import library、Twemoji を vendor/ へ配置する (release-zh.yml 用)。
+  上流の展開物は upstream/pkg に残す。
+
+inputs:
+  upstream-repo:
+    required: true
+  upstream-tag:
+    required: true
+  upstream-ffmpeg-build-id:
+    required: true
+  github-token:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Install NASM (libjpeg-turbo)
+      uses: ilammy/setup-nasm@v1
+
+    - name: Locate libclang (bindgen for FFmpeg)
+      shell: pwsh
+      run: |
+        $candidates = @(
+          'C:\Program Files\LLVM\bin',
+          (Get-Command clang -ErrorAction SilentlyContinue | ForEach-Object { Split-Path $_.Source })
+        ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'libclang.dll')) }
+        if (-not $candidates) { throw 'libclang.dll not found' }
+        $dir = @($candidates)[0]
+        Write-Host "LIBCLANG_PATH=$dir"
+        "LIBCLANG_PATH=$dir" >> $env:GITHUB_ENV
+
+    - name: Download upstream portable package
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        UPSTREAM_REPO: ${{ inputs.upstream-repo }}
+        UPSTREAM_TAG: ${{ inputs.upstream-tag }}
+      run: |
+        New-Item -ItemType Directory -Force upstream | Out-Null
+        gh release download $env:UPSTREAM_TAG -R $env:UPSTREAM_REPO -p 'mImageViewer_portable_*.zip' -D upstream
+        if ($LASTEXITCODE -ne 0) { throw "gh release download failed ($LASTEXITCODE)" }
+        $zip = Get-ChildItem upstream -Filter 'mImageViewer_portable_*.zip' | Select-Object -First 1
+        Expand-Archive -LiteralPath $zip.FullName -DestinationPath upstream\pkg -Force
+        Get-ChildItem -Recurse upstream\pkg | Select-Object FullName, Length | Format-Table -AutoSize
+
+    - name: Populate vendor/ from upstream runtime files
+      shell: pwsh
+      run: |
+        $pkg = 'upstream\pkg'
+        New-Item -ItemType Directory -Force vendor\pdfium\bin, vendor\ort, vendor\susie-worker, vendor\models, vendor\ffmpeg\bin | Out-Null
+        Copy-Item "$pkg\pdfium.dll" vendor\pdfium\bin\
+        Copy-Item "$pkg\onnxruntime.dll", "$pkg\onnxruntime_providers_shared.dll" vendor\ort\
+        Copy-Item "$pkg\mimageviewer-susie32.exe" vendor\susie-worker\
+        Copy-Item "$pkg\models\*.onnx" vendor\models\
+        Get-ChildItem vendor -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
+
+    - name: Fetch FFmpeg n7.1 headers and import libraries
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        UPSTREAM_FFMPEG_BUILD_ID: ${{ inputs.upstream-ffmpeg-build-id }}
+      run: |
+        # 残っている autobuild の中から最新の n7.1 LGPL shared build を探す。
+        $releases = gh api 'repos/BtbN/FFmpeg-Builds/releases?per_page=100' | ConvertFrom-Json
+        $asset = $null
+        foreach ($release in $releases) {
+          $asset = $release.assets | Where-Object { $_.name -like 'ffmpeg-n7.1*-win64-lgpl-shared-7.1.zip' } | Select-Object -First 1
+          if ($asset) { break }
+        }
+        if (-not $asset) { throw 'No n7.1 LGPL shared build found in BtbN/FFmpeg-Builds releases' }
+        Write-Host "Using $($asset.name) for headers / import libraries"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+        Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+        $root = Get-ChildItem ffmpeg-extract -Directory | Select-Object -First 1
+        Copy-Item "$($root.FullName)\include" vendor\ffmpeg\ -Recurse -Force
+        Copy-Item "$($root.FullName)\lib" vendor\ffmpeg\ -Recurse -Force
+        if (Test-Path "$($root.FullName)\LICENSE.txt") { Copy-Item "$($root.FullName)\LICENSE.txt" vendor\ffmpeg\ }
+        # 同梱 (portable) / 埋め込み (exe) する DLL は上流ポータブル版と同一のものにする。
+        Copy-Item upstream\pkg\av*.dll, upstream\pkg\sw*.dll vendor\ffmpeg\bin\ -Force
+        # アプリの「ソフトウェア情報」に出る FFmpeg ビルド識別子を同梱 DLL に合わせる。
+        "ffmpeg-$env:UPSTREAM_FFMPEG_BUILD_ID-win64-lgpl-shared-7.1.zip" | Set-Content -NoNewline -Encoding ascii vendor\ffmpeg\VERSION
+        Get-ChildItem vendor\ffmpeg\bin, vendor\ffmpeg\lib | Select-Object Name, Length | Format-Table -AutoSize
+
+    - name: Fetch Twemoji (stamp assets)
+      shell: bash
+      run: bash scripts/setup-twemoji.sh
