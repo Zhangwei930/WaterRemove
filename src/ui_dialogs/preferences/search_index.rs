@@ -23,6 +23,20 @@ macro_rules! entry {
 
 pub(super) const PREF_SEARCH_INDEX: &[PrefSearchEntry] = &[
     entry!(
+        "general/language",
+        General,
+        "表示言語 (Language)",
+        [
+            "言語",
+            "日本語",
+            "中文",
+            "简体中文",
+            "语言",
+            "Chinese",
+            "Japanese"
+        ]
+    ),
+    entry!(
         "general/theme",
         General,
         "テーマ",
@@ -1029,15 +1043,25 @@ pub(super) fn search_preferences(
     let normalized_query = query.trim().to_ascii_lowercase();
     let mut results = Vec::new();
     for (index, entry) in PREF_SEARCH_INDEX.iter().enumerate() {
-        let title = entry.title.to_ascii_lowercase();
+        // 表示言語が日本語以外のときは、画面に出ている訳語でも見つかるよう
+        // 原文と訳文をつないで照合する。
+        let searchable = |text: &str| {
+            let translated = crate::i18n::tr(text);
+            if translated == text {
+                text.to_ascii_lowercase()
+            } else {
+                format!("{text}\n{translated}").to_ascii_lowercase()
+            }
+        };
+        let title = searchable(entry.title);
         let keywords: Vec<String> = entry
             .keywords
             .iter()
             .map(|keyword| keyword.to_ascii_lowercase())
             .collect();
         let (category, category_index, page_index) = tree_position(entry.page);
-        let page = entry.page.label().to_ascii_lowercase();
-        let category = category.to_ascii_lowercase();
+        let page = searchable(entry.page.label());
+        let category = searchable(category);
         let all_match = terms.iter().all(|term| {
             title.contains(term)
                 || keywords.iter().any(|keyword| keyword.contains(term))
@@ -1047,7 +1071,10 @@ pub(super) fn search_preferences(
         if !all_match {
             continue;
         }
-        let rank = if title.starts_with(&normalized_query) {
+        let rank = if title
+            .split('\n')
+            .any(|part| part.starts_with(&normalized_query))
+        {
             0
         } else if terms.iter().all(|term| title.contains(term)) {
             1

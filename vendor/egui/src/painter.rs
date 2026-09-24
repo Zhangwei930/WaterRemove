@@ -533,6 +533,8 @@ impl Painter {
         color: crate::Color32,
         wrap_width: f32,
     ) -> Arc<Galley> {
+        let mut text = text;
+        crate::text_translation::translate_string(&mut text);
         self.fonts_mut(|f| f.layout(text, font_id, color, wrap_width))
     }
 
@@ -547,6 +549,8 @@ impl Painter {
         font_id: FontId,
         color: crate::Color32,
     ) -> Arc<Galley> {
+        let mut text = text;
+        crate::text_translation::translate_string(&mut text);
         self.fonts_mut(|f| f.layout(text, font_id, color, f32::INFINITY))
     }
 
@@ -556,6 +560,8 @@ impl Painter {
     #[inline]
     #[must_use]
     pub fn layout_job(&self, layout_job: LayoutJob) -> Arc<Galley> {
+        let mut layout_job = layout_job;
+        crate::text_translation::translate_layout_job(&mut layout_job);
         self.fonts_mut(|f| f.layout_job(layout_job))
     }
 

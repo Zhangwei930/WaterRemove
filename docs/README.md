@@ -144,6 +144,7 @@
 | [development-build-and-test.md](development-build-and-test.md) | 開発中の `cargo check` / 絞り込みテスト / 軽量 core ビルドと、リリース前の全体テストゲートの使い分け |
 | [test-video-generation.md](test-video-generation.md) | `testimage/movie/test_*fps_*p_sync.mp4` (FFmpeg testsrc2 + sine ビープ) の再生成手順 |
 | [ui-snapshot-policy.md](ui-snapshot-policy.md) | egui_kittest によるスナップショットテストの運用方針 |
+| [i18n.md](i18n.md) | UI 表示言語 (日本語 / 简体中文) の仕組み。egui の描画直前に翻訳表で差し替える方式、照合規則、利用者の文字列を訳さないガード、翻訳表の更新手順 (`scripts/i18n_tool.py`) |
 | [downscale-moire-lod-plan.md](downscale-moire-lod-plan.md) | 静止画縮小時のモアレ原因と、vendored `egui-wgpu` による opt-in GPU mipmap、旧手動縮小フィルタの互換撤去方針 |
 | [keymap-spec.md](keymap-spec.md) | キー / マウス操作仕様。フルスクリーン横断の詳細は [fullscreen-navigation-consistency.md](fullscreen-navigation-consistency.md) も参照 |
 | [search-test-plan.md](search-test-plan.md) | 検索・notify-rs 監視・キー操作の自動テスト整備計画 |

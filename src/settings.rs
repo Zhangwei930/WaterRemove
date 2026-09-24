@@ -2608,6 +2608,49 @@ impl TextContrast {
 }
 
 // -----------------------------------------------------------------------
+// UiLanguage (UI 表示言語)
+// -----------------------------------------------------------------------
+
+/// UI の表示言語。
+///
+/// ソース中の文字列は日本語のまま持ち、`Japanese` 以外では egui の描画直前に
+/// [`crate::i18n`] の翻訳表で置き換える。訳の無い文字列は日本語のまま表示する。
+#[derive(
+    serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum UiLanguage {
+    #[default]
+    Japanese,
+    SimplifiedChinese,
+    /// A value written by a future version. Normalize to Japanese during settings load so
+    /// downgrading never turns the whole settings record into a corrupt record.
+    #[serde(other)]
+    Unknown,
+}
+
+impl UiLanguage {
+    /// 設定画面に出す言語。
+    pub const SELECTABLE: [Self; 2] = [Self::Japanese, Self::SimplifiedChinese];
+
+    /// 各言語の自称。どの言語で UI を表示していても読めるよう翻訳しない。
+    pub fn native_name(self) -> &'static str {
+        match self.normalized() {
+            Self::Japanese => "日本語 (Japanese)",
+            Self::SimplifiedChinese => "简体中文 (Simplified Chinese)",
+            Self::Unknown => unreachable!("normalized ui language"),
+        }
+    }
+
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::Unknown => Self::Japanese,
+            value => value,
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
 // UiFontSettings (v2.7.0 UI フォント)
 // -----------------------------------------------------------------------
 
@@ -4732,6 +4775,10 @@ pub struct Settings {
     #[serde(default)]
     pub text_contrast: TextContrast,
 
+    /// UI の表示言語。
+    #[serde(default)]
+    pub ui_language: UiLanguage,
+
     /// OS DPI とは独立したアプリ内 UI 表示倍率 (50%..=200%、10% 刻み)。
     #[serde(default = "default_ui_scale_factor")]
     pub ui_scale_factor: f32,
@@ -6822,6 +6869,7 @@ impl Default for Settings {
             margin_fit_enabled: false,
             ui_theme: UiTheme::default(),
             text_contrast: TextContrast::default(),
+            ui_language: UiLanguage::default(),
             ui_scale_factor: default_ui_scale_factor(),
             ui_font: UiFontSettings::default(),
             first_setup_completed: false,
@@ -8684,6 +8732,7 @@ impl Settings {
         self.restore_toolbar_name_filter_after_load();
         self.folder_thumb_sort = self.folder_thumb_sort.sanitized_for_folder_thumb();
         self.text_contrast = self.text_contrast.normalized();
+        self.ui_language = self.ui_language.normalized();
         self.ui_scale_factor = normalize_ui_scale_factor(self.ui_scale_factor);
         self.ui_font.sanitize();
         self.pdf_worker_count = clamp_pdf_worker_count(self.pdf_worker_count) as u32;
@@ -12697,6 +12746,7 @@ mod tests {
         assert!(!s.first_setup_completed);
         assert_eq!(s.ai_feature_mode, AiFeatureMode::Light);
         assert_eq!(s.text_contrast, TextContrast::Standard);
+        assert_eq!(s.ui_language, UiLanguage::Japanese);
     }
 
     #[test]
@@ -12750,6 +12800,30 @@ mod tests {
         loaded.sanitize();
 
         assert_eq!(loaded.text_contrast, TextContrast::Standard);
+    }
+
+    #[test]
+    fn ui_language_round_trips_and_unknown_value_is_forward_compatible() {
+        let saved = serde_json::to_value(Settings {
+            ui_language: UiLanguage::SimplifiedChinese,
+            ..Settings::default()
+        })
+        .unwrap();
+        assert_eq!(
+            saved.get("ui_language").and_then(|v| v.as_str()),
+            Some("simplified_chinese")
+        );
+        let loaded: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(loaded.ui_language, UiLanguage::SimplifiedChinese);
+
+        let mut future: Settings =
+            serde_json::from_str(r#"{"ui_language":"future_language"}"#).unwrap();
+        assert_eq!(future.ui_language, UiLanguage::Unknown);
+        future.sanitize();
+        assert_eq!(future.ui_language, UiLanguage::Japanese);
+
+        let missing: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.ui_language, UiLanguage::Japanese);
     }
 
     #[test]

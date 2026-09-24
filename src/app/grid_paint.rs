@@ -384,6 +384,9 @@ pub(crate) fn draw_cell(
     if !ui.is_rect_visible(rect) {
         return;
     }
+    // セルにはファイル名・フォルダ名を描くため、UI 文字列と取り違えて訳さない。
+    // セル内の UI 文言は `crate::i18n::tr` で明示的に訳す。
+    let _no_translation = egui::text_translation::NoTranslationGuard::new();
 
     let base_painter = ui.painter();
     let mut content_painter = base_painter.clone();
@@ -458,7 +461,7 @@ pub(crate) fn draw_cell(
                     painter.text(
                         inner.center(),
                         egui::Align2::CENTER_CENTER,
-                        "動画",
+                        crate::i18n::tr("動画"),
                         egui::FontId::proportional(12.0),
                         egui::Color32::from_gray(160),
                     );
@@ -641,7 +644,7 @@ pub(crate) fn draw_cell(
                     max_font,
                     5.0,
                 );
-                let badge_text = format!("{} 枚", hit_count);
+                let badge_text = crate::i18n::tr(&format!("{} 枚", hit_count)).into_owned();
                 let badge_color = if dark {
                     egui::Color32::from_rgb(240, 200, 100)
                 } else {
@@ -681,7 +684,7 @@ pub(crate) fn draw_cell(
                     max_font,
                     8.0,
                 );
-                let badge_text = format!("{} 枚", hit_count);
+                let badge_text = crate::i18n::tr(&format!("{} 枚", hit_count)).into_owned();
                 let badge_color = if dark {
                     egui::Color32::from_rgb(240, 200, 100)
                 } else {
@@ -734,7 +737,7 @@ pub(crate) fn draw_cell(
             painter.text(
                 egui::pos2(inner.center().x, inner.max.y - 3.0),
                 egui::Align2::CENTER_BOTTOM,
-                reason.label(),
+                crate::i18n::tr(reason.label()),
                 egui::FontId::proportional(11.0),
                 fg,
             );

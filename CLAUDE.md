@@ -55,6 +55,7 @@ Codexへの実装委任とレビュー依頼は別の担当・会話で扱い、
 | 補正レイヤー / ローカル調整 / レイヤー合成 | [docs/local-adjustment-layer-v1.1.0-plan.md](docs/local-adjustment-layer-v1.1.0-plan.md) と [docs/local-adjust-filter-candidates.md](docs/local-adjust-filter-candidates.md) |
 | キーボード操作 / ショートカット / `consume_key` / `key_pressed` / native VK 判定 | [docs/keymap-spec.md](docs/keymap-spec.md) と [docs/key-customization-impl-plan.md](docs/key-customization-impl-plan.md)。新しいキー操作は原則 `KeyAction` + keymap helper 経由にする |
 | UI の見た目・配色を変える修正 | [docs/ui-snapshot-policy.md](docs/ui-snapshot-policy.md) (egui_kittest スナップショットの更新手順) |
+| UI 文言の追加・変更 / 表示言語 (简体中文) | [docs/i18n.md](docs/i18n.md)。翻訳表 `assets/i18n/zh-Hans.json` の更新は `scripts/i18n_tool.py`。ファイル名など利用者の文字列を描く箇所は `NoTranslationGuard` を検討する |
 | **detached viewer / F12 別ウィンドウ / 複数ウィンドウ** | [docs/detached-rework-plan.md](docs/detached-rework-plan.md) ⚠️ **リワーク中につき凍結ルールあり** (下の「Detached viewer リワーク中の凍結ルール」参照) |
 
 **設計を変えたら該当ドキュメントも同時に更新する** (下の「コード修正時のドキュメント同時更新」参照)。

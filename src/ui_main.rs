@@ -17974,6 +17974,8 @@ egui::ComboBox::from_id_salt("toolbar_subfolder_order_combo")
         job.wrap.max_rows = 3;
         job.wrap.break_anywhere = true;
         job.wrap.overflow_character = Some('…');
+        // 実際の表示は Label 経由で翻訳されるため、高さの計測も同じ文言で行う。
+        egui::text_translation::translate_layout_job(&mut job);
         let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
         let measured_h = galley.size().y + popup_frame.total_margin().sum().y;
         let y = selection_info_popup_y(cell_rect, viewport, measured_h);

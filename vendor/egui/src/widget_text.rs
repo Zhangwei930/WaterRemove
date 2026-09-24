@@ -693,7 +693,7 @@ impl WidgetText {
         fallback_font: FontSelection,
         default_valign: Align,
     ) -> Arc<LayoutJob> {
-        match self {
+        let mut job = match self {
             Self::Text(text) => Arc::new(LayoutJob::simple_format(
                 text,
                 TextFormat {
@@ -709,8 +709,13 @@ impl WidgetText {
                 default_valign,
             )),
             Self::LayoutJob(job) => job,
-            Self::Galley(galley) => galley.job.clone(),
+            // Already laid out (and translated) text.
+            Self::Galley(galley) => return galley.job.clone(),
+        };
+        if !job.text.is_ascii() && crate::text_translation::has_text_translator() {
+            crate::text_translation::translate_layout_job(Arc::make_mut(&mut job));
         }
+        job
     }
 
     /// Layout with wrap mode based on the containing [`Ui`].
@@ -758,6 +763,7 @@ impl WidgetText {
                     },
                 );
                 layout_job.wrap = text_wrapping;
+                crate::text_translation::translate_layout_job(&mut layout_job);
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
             Self::RichText(text) => {
@@ -767,11 +773,13 @@ impl WidgetText {
                     default_valign,
                 );
                 layout_job.wrap = text_wrapping;
+                crate::text_translation::translate_layout_job(&mut layout_job);
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
             Self::LayoutJob(job) => {
                 let mut job = Arc::unwrap_or_clone(job);
                 job.wrap = text_wrapping;
+                crate::text_translation::translate_layout_job(&mut job);
                 ctx.fonts_mut(|f| f.layout_job(job))
             }
             Self::Galley(galley) => galley,

@@ -3450,9 +3450,10 @@ pub(super) fn draw_native_toast(
         egui::vec2(overlay_width_points, overlay_height_points),
     );
     let font = egui::FontId::proportional(if toast.centered { 24.0 } else { 16.0 });
-    let galley = ctx.fonts_mut(|fonts| {
-        fonts.layout_no_wrap(toast.text.clone(), font.clone(), egui::Color32::WHITE)
-    });
+    let mut toast_text = toast.text.clone();
+    egui::text_translation::translate_string(&mut toast_text);
+    let galley =
+        ctx.fonts_mut(|fonts| fonts.layout_no_wrap(toast_text, font.clone(), egui::Color32::WHITE));
     let padding = if toast.centered {
         egui::vec2(28.0, 18.0)
     } else {

@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::App;
-use crate::settings::{AiFeatureMode, UiTheme};
+use crate::settings::{AiFeatureMode, UiLanguage, UiTheme};
 
 impl App {
     pub(crate) fn show_first_setup_dialog(&mut self, ctx: &egui::Context) {
@@ -17,6 +17,19 @@ impl App {
             ui.heading("初回設定");
             ui.add_space(8.0);
             ui.label("使い始める前に、表示とAI処理の基本設定を選んでください。");
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
+            // 選ぶとその場で表示言語が切り替わる (App::update が毎フレーム適用する)。
+            ui.label(egui::RichText::new("表示言語 (Language)").strong());
+            for language in UiLanguage::SELECTABLE {
+                ui.radio_value(
+                    &mut self.settings.ui_language,
+                    language,
+                    language.native_name(),
+                );
+            }
 
             ui.add_space(12.0);
             ui.separator();

@@ -76007,6 +76007,11 @@ impl App {
             }
         }
 
+        // UI 表示言語を適用 (変化したときだけ翻訳表を差し替える)。
+        if crate::i18n::apply_language(self.settings.ui_language) {
+            ctx.request_repaint();
+        }
+
         // 初回フレームで設定された開始フォルダを開く。起動引数の explicit path は
         // UI スレッド外で解決し、前回フォルダ / Desktop / 指定フォルダの優先順位と
         // fallback は known_folders::startup_folder に集約する。
@@ -76312,6 +76317,8 @@ impl App {
                 }),
             self.any_indexer_in_full_scan(),
         );
+        // OS のタイトルバーは egui の描画を通らないため、表示言語の訳をここで当てる。
+        let title = crate::i18n::tr(&title).into_owned();
         // タイトルが変わったときだけ送信する (2026-05-10 修正)。
         // 無条件に send_viewport_cmd(Title(...)) すると egui 内部の `request_repaint_of`
         // が毎フレーム発火し、App::update が 60fps で回り続けて他アプリ FPS を奪う。

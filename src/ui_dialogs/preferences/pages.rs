@@ -19,12 +19,29 @@ use crate::settings::{
     FullscreenHorizontalCursorDirection, FullscreenJumpMode, FullscreenSeekDirection,
     GridItemDisplayKind, Parallelism, ReadingDirection, ReadingFlow, SortOrder, SpreadMode,
     StartupFolderMode, StartupWindowState, TextContrast, UI_FONT_VERTICAL_ADJUST_MAX,
-    UI_FONT_VERTICAL_ADJUST_MIN, UiFontSelection, UiTheme,
+    UI_FONT_VERTICAL_ADJUST_MIN, UiFontSelection, UiLanguage, UiTheme,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
 
 pub(super) fn page_general(ui: &mut egui::Ui, state: &mut PreferencesState) {
+    anchored(ui, state, "general/language", |ui, state| {
+        // 見出しは両言語を併記し、どちらの言語で表示していても探せるようにする。
+        ui.label(egui::RichText::new("表示言語 (Language)").strong());
+        ui.add_space(4.0);
+        for language in UiLanguage::SELECTABLE {
+            ui.radio_value(
+                &mut state.settings.ui_language,
+                language,
+                language.native_name(),
+            );
+        }
+        ui.label(
+            egui::RichText::new("翻訳の無い箇所は日本語で表示します。OK を押すと切り替わります。")
+                .weak(),
+        );
+    });
+    ui.add_space(10.0);
     anchored(ui, state, "general/theme", |ui, state| {
         ui.label(egui::RichText::new("テーマ").strong());
         ui.add_space(4.0);

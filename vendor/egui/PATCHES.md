@@ -77,3 +77,29 @@ root / eframe / egui-wgpu / egui standalone の cargo tree は、すべて同じ
 アプリ全体の最終 gate は target/r4-test-full-final4-j1.log で成功（main lib 7693成功、38ignored）。
 portable のビルド・24 runtime files の更新照合も成功した。実機確認は利用者の返答待ちである。
 段階結果と残作業は [レビュー修正記録](../../docs/duplicate-detection-review-fixes-20260907.md) を参照。
+
+## UI 文字列の翻訳フック (2026-09-24 追加)
+
+UI 表示言語の切替 ([docs/i18n.md](../../docs/i18n.md)) のため、描画直前に文字列を差し替える
+フックを追加した。アプリ側が翻訳関数を登録しない限り (日本語表示の既定状態)、
+描画結果・レイアウト・widget id は原本と同一である。
+
+- 追加: `src/text_translation.rs` (`pub mod text_translation`)
+  - `set_text_translator(Option<Arc<TextTranslator>>)`: プロセス全体の翻訳関数を登録 / 解除する。
+  - `translate_text` / `translate_string` / `translate_layout_job`: 翻訳関数を通す。
+    ASCII だけの文字列は翻訳関数を呼ばない。`LayoutJob` は section ごとに訳して書式を保つ。
+  - `NoTranslationGuard`: 生存中はこのスレッドの自動翻訳 (下記フック) を止める。
+    ファイル名などの利用者の文字列を描く箇所で使う。明示の `translate_text` は止めない。
+- 変更: 自動翻訳のフック位置
+  - `src/widget_text.rs`: `WidgetText::into_layout_job` (Label 等) と `into_galley_impl`
+    (Button / Window タイトル / メニュー / ComboBox / ツールチップ等)。`Galley` variant は
+    配置済みなので訳さない。
+  - `src/painter.rs`: `Painter::layout` / `layout_no_wrap` (`Painter::text` 経由を含む) /
+    `layout_job`。
+  - `TextEdit` は本文を独自 layouter で配置するため、入力中の文字列は訳さない
+    (hint text は `WidgetText` なので訳す)。
+- widget id は訳す前の文字列から作られるため、言語を切り替えても id は変わらない。
+- 回帰テスト: `text_translation::tests` の 4 件 (単一 section、複数 section の範囲維持、
+  ASCII / 未訳の素通し、`NoTranslationGuard`)。
+  `cargo test --manifest-path vendor/egui/Cargo.toml --lib text_translation` で 4 件成功
+  (macOS 上で実行。Windows 上の全体 gate は未実行)。

@@ -133,6 +133,7 @@ pub mod gpu_info;
 pub mod gpu_lanczos_spike;
 mod grid_input_diagnostics;
 pub mod grid_item;
+pub mod i18n;
 mod ime_focus;
 pub mod indexer_manager;
 pub mod indexer_progress;
@@ -1387,6 +1388,8 @@ pub fn run() -> eframe::Result {
             let resolved = os_theme::resolve(saved.ui_theme);
             os_theme::apply_resolved_with_contrast(&cc.egui_ctx, resolved, saved.text_contrast);
             emit_startup("apply_theme", Some(t));
+            // 表示言語も初回フレーム前に適用し、日本語が 1 フレーム見えるのを避ける。
+            crate::i18n::apply_language(saved.ui_language);
             // UI 表示倍率も初回フレーム前に復元する。キーボードズームは settings と
             // presenter の倍率同期を迂回するため、初回リリースでは無効化する。
             cc.egui_ctx
